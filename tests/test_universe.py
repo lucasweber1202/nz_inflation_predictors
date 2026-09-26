@@ -12,6 +12,7 @@ def test_active_identity_and_coverage() -> None:
     assert len({row["series_id"] for row in ROWS if row["series_id"]}) == sum(bool(row["series_id"]) for row in ROWS)
     assert sum(row["role"] == "target" and row["status"] == "active" for row in ROWS) == 1
     for row in ROWS:
+        assert row["role"] in {"target", "predictor"}
         assert row["status"] in {"active", "candidate", "deprecated"}
         assert row["priority"] in {"P0", "P1", "P2"}
         assert all(row[key] for key in ("role", "name", "source", "collector_repo", "frequency", "pit_limit", "coverage_note"))
