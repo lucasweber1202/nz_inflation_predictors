@@ -1,1 +1,5 @@
-# nz_inflation_predictors
+# New Zealand inflation predictors: operational universe
+
+`universe.csv` is the governed target/predictor catalogue, not a forecasting model. Active IDs have live-source evidence in collector PRs; candidates are explicit coverage gaps with blank series IDs. The CPI target remains draft until weights, hierarchy and release monitoring pass. Current CSV backfills cannot be treated as historical point-in-time snapshots.
+
+Review the source and collector PR for each active ID before fitting a nowcast. The expected sign is only an economic hypothesis and can change with lag and regime. Source references: [Stats NZ CPI](https://www.stats.govt.nz/information-releases/consumers-price-index-june-2026-quarter/), [Stats NZ SPI](https://www.stats.govt.nz/information-releases/selected-price-indexes-august-2026/), [MBIE fuel](https://www.mbie.govt.nz/building-and-energy/energy-and-natural-resources/energy-statistics-and-modelling/energy-statistics/weekly-fuel-price-monitoring), [RBNZ B1](https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates/exchange-rates-and%20the%20trade%20weighted%20index). Authority: Masuko template main `8e4613b36c2808a7de234934a81bb26f7a22d367`; NZD vocabulary pending upstream PR #1.
