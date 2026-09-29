@@ -3,6 +3,10 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+import pytest
+
+from scripts.engine import read_feature_spec
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -31,6 +35,23 @@ def test_registries() -> None:
         and not any(u["source"] == r["dataset"] and u["series_id"] for u in universe)
     )
     assert all(r["source_url"].startswith("https://") for r in sources)
+    for row in predictors:
+        assert row["target_frequency"] == targets[0]["frequency"]
+        if row["aggregation"] == "PENDING_RESEARCH":
+            if row["series_id"]:
+                with pytest.raises(
+                    ValueError, match="frequency mismatch|requires research approval"
+                ):
+                    read_feature_spec(
+                        ROOT / "predictor_map.csv",
+                        row["series_id"],
+                        targets[0]["frequency"],
+                    )
+        else:
+            assert row["series_id"]
+            read_feature_spec(
+                ROOT / "predictor_map.csv", row["series_id"], targets[0]["frequency"]
+            )
     assert not any(
         "collector_" in line
         for line in (ROOT / "scripts/engine.py").read_text().splitlines()

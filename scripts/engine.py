@@ -11,7 +11,7 @@ import json
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -23,6 +23,64 @@ class Observation:
     value: float
     collected_at: str
     release_date: date | None = None
+
+
+@dataclass(frozen=True)
+class FeatureSpec:
+    """A governed, explicit mapping from one predictor to one target cadence."""
+
+    predictor_frequency: str
+    target_frequency: str
+    aggregation: str = "last"
+    transformation: str = "level"
+    lag: int = 0
+    availability_rule: str = "observed_as_of_origin"
+
+    def __post_init__(self) -> None:
+        allowed = {
+            "monthly": {"daily", "weekly", "monthly"},
+            "quarterly": {"daily", "weekly", "monthly", "quarterly"},
+        }
+        if self.predictor_frequency not in allowed.get(self.target_frequency, set()):
+            raise ValueError(
+                f"frequency mismatch: {self.predictor_frequency} -> {self.target_frequency} unsupported"
+            )
+        if self.aggregation not in {"last", "mean", "sum"}:
+            raise ValueError("aggregation must be last, mean or sum")
+        if self.transformation not in {"level", "difference", "pct_change"}:
+            raise ValueError("transformation must be level, difference or pct_change")
+        if self.lag < 0 or self.availability_rule not in {
+            "observed_as_of_origin",
+            "complete_period_only",
+        }:
+            raise ValueError("invalid lag or availability rule")
+
+
+def read_feature_spec(
+    path: Path, predictor_id: str, target_frequency: str
+) -> FeatureSpec:
+    with path.open(newline="", encoding="utf-8") as handle:
+        matches = [r for r in csv.DictReader(handle) if r["series_id"] == predictor_id]
+    if len(matches) != 1:
+        raise ValueError(
+            f"predictor {predictor_id!r} must have exactly one governed row"
+        )
+    row = matches[0]
+    if row["target_frequency"] != target_frequency:
+        raise ValueError("frequency mismatch between target registry and feature spec")
+    if any(
+        row[key] == "PENDING_RESEARCH"
+        for key in ("aggregation", "transformation", "lag", "availability_rule")
+    ):
+        raise ValueError(f"feature spec for {predictor_id} requires research approval")
+    return FeatureSpec(
+        row["frequency"],
+        target_frequency,
+        row["aggregation"],
+        row["transformation"],
+        int(row["lag"]),
+        row["availability_rule"],
+    )
 
 
 def read_contract(path: Path) -> list[Observation]:
@@ -82,6 +140,80 @@ def month_end(day: date) -> date:
     from calendar import monthrange
 
     return day.replace(day=monthrange(day.year, day.month)[1])
+
+
+def period_start(day: date, frequency: str) -> date:
+    if frequency == "monthly":
+        return day.replace(day=1)
+    if frequency == "quarterly":
+        return date(day.year, 1 + 3 * ((day.month - 1) // 3), 1)
+    raise ValueError(f"unsupported target frequency {frequency}")
+
+
+def period_end(day: date, frequency: str) -> date:
+    start = period_start(day, frequency)
+    months = 1 if frequency == "monthly" else 3
+    year, month = divmod(start.year * 12 + start.month - 1 + months, 12)
+    return date(year, month + 1, 1) - timedelta(days=1)
+
+
+def shift_period(day: date, count: int, frequency: str) -> date:
+    from calendar import monthrange
+
+    months = count * (1 if frequency == "monthly" else 3)
+    year, index = divmod(day.year * 12 + day.month - 1 + months, 12)
+    month = index + 1
+    return date(year, month, min(day.day, monthrange(year, month)[1]))
+
+
+def feature_at_origin(
+    rows: list[Observation],
+    series_id: str,
+    origin: date,
+    spec: FeatureSpec,
+    *,
+    mode: str = "strict",
+) -> tuple[float | None, date, date]:
+    """Aggregate observed rows in the configured period, bounded by the origin.
+
+    Difference and pct_change compare equivalent partial windows one period apart.
+    No observation or revision after either historical cutoff enters its feature.
+    """
+    cutoff = shift_period(origin, -spec.lag, spec.target_frequency)
+
+    def aggregate(cut: date) -> tuple[float | None, date, date]:
+        start = period_start(cut, spec.target_frequency)
+        end = min(period_end(cut, spec.target_frequency), cut)
+        if spec.availability_rule == "complete_period_only" and cut < period_end(
+            cut, spec.target_frequency
+        ):
+            return None, start, end
+        snapshot = as_of(rows, min(cut, origin), mode=mode)
+        selected = [
+            r
+            for (sid, ref), r in snapshot.items()
+            if sid == series_id and start <= ref <= end
+        ]
+        if not selected:
+            return None, start, end
+        if spec.aggregation == "last":
+            value = max(selected, key=lambda r: r.reference_date).value
+        elif spec.aggregation == "mean":
+            value = sum(r.value for r in selected) / len(selected)
+        else:
+            value = sum(r.value for r in selected)
+        return value, start, end
+
+    value, start, end = aggregate(cutoff)
+    if value is None or spec.transformation == "level":
+        return value, start, end
+    prior_cutoff = shift_period(cutoff, -1, spec.target_frequency)
+    previous, _, _ = aggregate(prior_cutoff)
+    if previous is None:
+        return None, start, end
+    if spec.transformation == "difference":
+        return value - previous, start, end
+    return (value / previous - 1.0) if previous != 0 else None, start, end
 
 
 def align_monthly(
@@ -203,45 +335,74 @@ def experiment(
     order: int = 1,
     window: int | None = None,
     predictor_id: str | None = None,
+    feature_spec: FeatureSpec | None = None,
+    target_frequency: str,
+    horizon: int,
+    country: str,
     mode: str = "strict",
     truth_as_of: date | None = None,
 ) -> dict:
-    """Pseudo-OOS: origin features are as-of, and target truth has its own vintage cutoff.
-
-    For each origin, predict the next target reference period present in the truth
-    contract. Backfilled rows stamped after origin cannot train a strict PIT model.
-    """
+    """Pseudo-OOS with explicit target period and historical feature cutoffs."""
     if window is not None and window < order + 2:
         raise ValueError("rolling window too short")
     if truth_as_of is None:
         raise ValueError("explicit target truth cutoff required")
+    if horizon < 0:
+        raise ValueError("horizon must be a nonnegative number of target periods")
+    period_start(
+        date(2000, 1, 1), target_frequency
+    )  # validate cadence even without origins
+    if model == "arx" and (predictor_id is None or feature_spec is None):
+        raise ValueError("ARX requires predictor ID and governed feature spec")
+    if feature_spec is not None and feature_spec.target_frequency != target_frequency:
+        raise ValueError("frequency mismatch between feature spec and target")
     truth = as_of([r for r in rows if r.series_id == target_id], truth_as_of)
+    truth_by_period: dict[date, float] = {}
+    for (sid, ref), row in truth.items():
+        period = period_end(ref, target_frequency)
+        if period in truth_by_period:
+            raise ValueError(f"duplicate target period {period}")
+        truth_by_period[period] = row.value
     outcomes = []
     for origin in sorted(set(origins)):
+        target_period = period_end(
+            shift_period(origin, horizon, target_frequency), target_frequency
+        )
+        if target_period not in truth_by_period:
+            continue  # A missing declared horizon is never silently replaced by a later period.
         snapshot = as_of(rows, origin, mode=mode)
         training = sorted(
-            (d, r.value)
+            (period_end(d, target_frequency), r.value)
             for (sid, d), r in snapshot.items()
-            if sid == target_id and d <= origin
+            if sid == target_id and period_end(d, target_frequency) < target_period
         )
-        future = sorted(
-            (d, r.value)
-            for (sid, d), r in truth.items()
-            if sid == target_id and d > origin
-        )
-        if not training or not future:
+        if not training:
             continue
         if window is not None:
             training = training[-window:]
         dates, values = zip(*training)
         predictor = None
         next_predictor = None
-        if predictor_id is not None:
-            predictors = {
-                d: r.value for (sid, d), r in snapshot.items() if sid == predictor_id
-            }
-            predictor = [predictors.get(d) for d in dates]
-            next_predictor = predictors.get(future[0][0])
+        feature_window_start = None
+        feature_window_end = None
+        if model == "arx":
+            assert predictor_id is not None and feature_spec is not None
+            predictor = []
+            for period in dates:
+                distance = (target_period.year - period.year) * (
+                    12 if target_frequency == "monthly" else 4
+                )
+                distance += (target_period.month - period.month) // (
+                    1 if target_frequency == "monthly" else 3
+                )
+                historical_origin = shift_period(origin, -distance, target_frequency)
+                historical_feature, _, _ = feature_at_origin(
+                    rows, predictor_id, historical_origin, feature_spec, mode=mode
+                )
+                predictor.append(historical_feature)
+            next_predictor, feature_window_start, feature_window_end = (
+                feature_at_origin(rows, predictor_id, origin, feature_spec, mode=mode)
+            )
         try:
             estimate = forecast(
                 list(values),
@@ -254,10 +415,28 @@ def experiment(
             continue
         outcomes.append(
             {
+                "country": country,
+                "target": target_id,
+                "predictor": predictor_id if model == "arx" else None,
+                "model": model,
+                "pit_mode": mode,
                 "origin": origin.isoformat(),
-                "target_date": future[0][0].isoformat(),
-                "actual": future[0][1],
-                "predicted": estimate,
+                "target_period": target_period.isoformat(),
+                "horizon": horizon,
+                "train_start": dates[0].isoformat(),
+                "train_end": dates[-1].isoformat(),
+                "feature_cutoff": origin.isoformat(),
+                "feature_window_start": feature_window_start.isoformat()
+                if feature_window_start
+                else None,
+                "feature_window_end": feature_window_end.isoformat()
+                if feature_window_end
+                else None,
+                "feature_value": next_predictor,
+                "truth_as_of": truth_as_of.isoformat(),
+                "actual": truth_by_period[target_period],
+                "prediction": estimate,
+                "error": estimate - truth_by_period[target_period],
                 "previous": values[-1],
             }
         )
@@ -266,16 +445,70 @@ def experiment(
             "no valid origins; check PIT, frequency alignment and minimum history"
         )
     return {
+        "schema_version": 1,
+        "country": country,
+        "target": target_id,
+        "predictor": predictor_id if model == "arx" else None,
         "model": model,
         "pit_mode": mode,
+        "target_frequency": target_frequency,
+        "horizon": horizon,
         "truth_as_of": truth_as_of.isoformat(),
         "n": len(outcomes),
         "scores": metrics(
             [o["actual"] for o in outcomes],
-            [o["predicted"] for o in outcomes],
+            [o["prediction"] for o in outcomes],
             [o["previous"] for o in outcomes],
         ),
         "predictions": outcomes,
+    }
+
+
+def compare_common_sample(experiments: list[dict]) -> dict:
+    """Recompute metrics only over identical origin/target pairs and truth values."""
+    if len(experiments) < 2:
+        raise ValueError("at least two experiment outputs required")
+    fields = (
+        "country",
+        "target",
+        "target_frequency",
+        "horizon",
+        "truth_as_of",
+        "pit_mode",
+    )
+    if any(
+        tuple(e[key] for key in fields) != tuple(experiments[0][key] for key in fields)
+        for e in experiments[1:]
+    ):
+        raise ValueError("incompatible target, horizon, PIT or truth vintage")
+    indexed = [
+        {(p["origin"], p["target_period"]): p for p in e["predictions"]}
+        for e in experiments
+    ]
+    common = sorted(set.intersection(*(set(x) for x in indexed)))
+    if not common:
+        raise ValueError("no common forecast origins")
+    for key in common:
+        if len({(x[key]["actual"], x[key]["previous"]) for x in indexed}) != 1:
+            raise ValueError(
+                "target truth or directional baseline mismatch on common origin"
+            )
+    return {
+        "schema_version": 1,
+        "common_n": len(common),
+        "origins": [{"origin": a, "target_period": b} for a, b in common],
+        "models": [
+            {
+                "model": e["model"],
+                "predictor": e["predictor"],
+                "scores": metrics(
+                    [x[k]["actual"] for k in common],
+                    [x[k]["prediction"] for k in common],
+                    [x[k]["previous"] for k in common],
+                ),
+            }
+            for e, x in zip(experiments, indexed)
+        ],
     }
 
 
@@ -285,6 +518,17 @@ def main() -> None:
     )
     parser.add_argument("csv", type=Path)
     parser.add_argument("--target", required=True)
+    parser.add_argument("--country", required=True, choices=("AUD", "NZD"))
+    parser.add_argument(
+        "--target-registry", type=Path, default=Path("target_registry.csv")
+    )
+    parser.add_argument("--predictor-map", type=Path, default=Path("predictor_map.csv"))
+    parser.add_argument(
+        "--horizon",
+        type=int,
+        required=True,
+        help="0=current target period, 1=next period",
+    )
     parser.add_argument(
         "--origins", type=Path, required=True, help="one ISO date per line"
     )
@@ -299,6 +543,18 @@ def main() -> None:
         "--pit-mode", choices=("strict", "reconstructed"), default="strict"
     )
     args = parser.parse_args()
+    with args.target_registry.open(newline="", encoding="utf-8") as handle:
+        targets = [
+            row for row in csv.DictReader(handle) if row["series_id"] == args.target
+        ]
+    if len(targets) != 1 or targets[0]["status"] != "active":
+        parser.error("target must be exactly one active row in target registry")
+    target_frequency = targets[0]["frequency"]
+    spec = (
+        read_feature_spec(args.predictor_map, args.predictor, target_frequency)
+        if args.model == "arx" and args.predictor
+        else None
+    )
     dates = [
         date.fromisoformat(line.strip())
         for line in args.origins.read_text().splitlines()
@@ -314,6 +570,10 @@ def main() -> None:
                 order=args.order,
                 window=args.window,
                 predictor_id=args.predictor,
+                feature_spec=spec,
+                target_frequency=target_frequency,
+                horizon=args.horizon,
+                country=args.country,
                 mode=args.pit_mode,
                 truth_as_of=args.truth_as_of,
             ),

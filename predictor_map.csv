@@ -1,8 +1,9 @@
-series_id,collector_repo,frequency,status,hypothesis,priority
-STATSNZ_SPI_CPIM_SE901,collector_statsnz_spi,monthly,active,Food cost channel,P1
-STATSNZ_SPI_CPIM_SE9072020000,collector_statsnz_spi,monthly,active,Fuel pass-through,P1
-STATSNZ_SPI_CPIM_SE904501,collector_statsnz_spi,monthly,active,Household energy channel,P1
-MBIE_REGULAR_ADJUSTED_RETAIL_NZD_C_L,collector_mbie_nz,weekly,active,1170 weeks; fetched unattended with an honest User-Agent (Imperva challenges browser impersonation),P1
-MBIE_DIESEL_ADJUSTED_RETAIL_NZD_C_L,collector_mbie_nz,weekly,active,1170 weeks; fetched unattended with an honest User-Agent,P1
-,collector_rbnz_nz,daily,candidate,Collector implemented and tested (RBNZ_B1_EXRT_DS41_NZB17); not active until a live run: RBNZ Cloudflare challenges every non-allowlisted IP; needs RBNZ to allowlist the collector host's static IP,P1
-,collector_rbnz_nz,daily,candidate,Collector implemented and tested (RBNZ_B2_INM_DP1_N); ID and layout verified against a published B2 workbook; not active until a live run from an RBNZ-allowlisted IP,P1
+series_id,collector_repo,frequency,status,hypothesis,priority,target_frequency,aggregation,transformation,lag,availability_rule
+STATSNZ_SPI_CPIM_SE901,collector_statsnz_spi,monthly,active,Food cost channel,P1,quarterly,mean,level,0,observed_as_of_origin
+STATSNZ_SPI_CPIM_SE9072020000,collector_statsnz_spi,monthly,active,Fuel pass-through,P1,quarterly,mean,level,0,observed_as_of_origin
+STATSNZ_SPI_CPIM_SE904501,collector_statsnz_spi,monthly,active,Household energy channel,P1,quarterly,mean,level,0,observed_as_of_origin
+MBIE_REGULAR_ADJUSTED_RETAIL_NZD_C_L,collector_mbie_nz,weekly,active,1170 weeks; fetched unattended with an honest User-Agent (Imperva challenges browser impersonation),P1,quarterly,mean,level,0,observed_as_of_origin
+MBIE_DIESEL_ADJUSTED_RETAIL_NZD_C_L,collector_mbie_nz,weekly,active,1170 weeks; fetched unattended with an honest User-Agent,P1,quarterly,mean,level,0,observed_as_of_origin
+,collector_rbnz_nz,daily,candidate,Collector implemented and tested (RBNZ_B1_EXRT_DS41_NZB17); not active until a live run: RBNZ Cloudflare challenges every non-allowlisted IP; needs RBNZ to allowlist the collector host's static IP,P1,quarterly,PENDING_RESEARCH,PENDING_RESEARCH,PENDING_RESEARCH,PENDING_RESEARCH
+,collector_rbnz_nz,daily,candidate,Collector implemented and tested (RBNZ_B2_INM_DP1_N); ID and layout verified against a published B2 workbook; not active until a live run from an RBNZ-allowlisted IP,P1,quarterly,PENDING_RESEARCH,PENDING_RESEARCH,PENDING_RESEARCH,PENDING_RESEARCH
+STATSNZ_SPI_CPIM_SE9041S,collector_statsnz_spi,monthly,active,housing services,P1,quarterly,mean,level,0,observed_as_of_origin

@@ -72,12 +72,26 @@ def test_alignment_and_known_answer_experiment() -> None:
         ),
     ]
     assert align_monthly(as_of(rows, origin), "TARGET") == {date(2019, 12, 31): 10}
-    outcome = experiment(rows, "TARGET", [origin], truth_as_of=date(2020, 2, 3))
+    kwargs = {
+        "truth_as_of": date(2020, 2, 3),
+        "target_frequency": "monthly",
+        "horizon": 0,
+        "country": "AUD",
+    }
+    outcome = experiment(rows, "TARGET", [origin], **kwargs)
     assert outcome["n"] == 1
     assert outcome["scores"]["mae"] == 2
-    assert outcome == experiment(rows, "TARGET", [origin], truth_as_of=date(2020, 2, 3))
+    assert outcome == experiment(rows, "TARGET", [origin], **kwargs)
     try:
-        experiment(rows, "TARGET", [origin], truth_as_of=origin)
+        experiment(
+            rows,
+            "TARGET",
+            [origin],
+            target_frequency="monthly",
+            horizon=0,
+            country="AUD",
+            truth_as_of=origin,
+        )
         assert False, "target truth cannot be available before release"
     except ValueError:
         pass

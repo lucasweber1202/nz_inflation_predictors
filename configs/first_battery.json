@@ -1,7 +1,16 @@
 {
   "target": "STATSNZ_CPI_CPIQ_SE9A",
-  "models": ["mean", "last", "ar", "arx"],
+  "models": [
+    "mean",
+    "last",
+    "ar",
+    "arx"
+  ],
   "pit_mode": "strict",
   "order": 1,
-  "validation": "expanding pseudo-OOS; explicit origins and truth_as_of"
+  "validation": "expanding pseudo-OOS; explicit origins and truth_as_of",
+  "target_frequency": "quarterly",
+  "horizon": 0,
+  "feature_spec": "predictor_map.csv",
+  "turning_point_metric": "NOT_APPLICABLE_UNTIL_THRESHOLD_DEFINED"
 }
