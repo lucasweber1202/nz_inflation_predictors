@@ -1,0 +1,7 @@
+{
+  "target": "STATSNZ_CPI_CPIQ_SE9A",
+  "models": ["mean", "last", "ar", "arx"],
+  "pit_mode": "strict",
+  "order": 1,
+  "validation": "expanding pseudo-OOS; explicit origins and truth_as_of"
+}
