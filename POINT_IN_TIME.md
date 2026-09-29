@@ -1,0 +1,5 @@
+# Point in time
+
+Strict PIT uses only `vintage_date <= origin` and `reference_date <= origin`. The first backfill is stamped with the collection date, so earlier origins have no invented historical coverage. Reconstructed PIT requires an independently verified per-row release date and is explicitly labelled `reconstructed`; current revised values can still differ from original releases. Same-day revisions collapse to the latest collected value. Target truth uses an explicit `truth_as_of`, separate from feature origin. No sub-day claims or retractions are supported.
+
+ARX rebuilds each training feature using the historically corresponding origin, rather than querying the future target reference date. `feature_window_start`, `feature_window_end`, `feature_cutoff`, `target_period`, `horizon`, and `truth_as_of` are included in every output row. Reconstructed PIT remains a labelled sensitivity analysis; the current revised backfill cannot recover the historical value that was actually published.

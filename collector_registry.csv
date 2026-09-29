@@ -1,0 +1,5 @@
+collector_repo,country,status,contract,blocker
+collector_mbie_nz,NZD,active,metadata + time_series + logs,
+collector_rbnz_nz,NZD,candidate,metadata + time_series + logs,RBNZ static-IP allowlist and live certification
+collector_statsnz_cpi,NZD,active,metadata + time_series + logs,
+collector_statsnz_spi,NZD,active,metadata + time_series + logs,

@@ -1,0 +1,2 @@
+series_id,frequency,collector_repo,status,truth_vintages
+STATSNZ_CPI_CPIQ_SE9A,quarterly,collector_statsnz_cpi,active,persisted collector vintages; explicit truth_as_of
